@@ -65,6 +65,10 @@
      (if (depth-<= exn-depth depth)
          #f ;; An unconditional break, so the stack becomes polymorphic
          (error 'verify-expr "Invalid rethrow depth in ~a" expr)))
+    (`(drop-exception)
+     (if (depth-<= 1 depth)
+         (depth-sub depth 1)
+         (error 'verify-expr "No exception to drop")))
     (`(try ,body (catch ,catch))
      (if (and (depth-eq? (verify-expr body depth env) depth)
               (depth-eq? (verify-expr catch (add1 depth) env) (add1 depth)))
@@ -84,7 +88,9 @@
   (cond
     ((and d1 d2) (<= d1 d2))
     ((not d2) #t)
-    (else #f)))  
+    (else #f)))
+(define (depth-sub d1 d2)
+  (and d1 (- d1 d2)))
 
 
 ;; This is a manual translation of simple-throwing-cfg
@@ -101,3 +107,11 @@
 (verify-expr '(if (body a) (body b)) 0 '())
 (verify-expr '(block (0 . 0) (loop (break 1))) 0 '())
 (verify-expr '(try (body a) (catch (rethrow 0))) 0 '())
+(verify-expr '(block (0 . 0)
+                (block (0 . 1)
+                  (try
+                   (body a)
+                   (catch
+                     (break 0)))
+                  (break 1))
+                (drop-exception)) 0 '())
