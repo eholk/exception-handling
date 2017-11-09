@@ -61,11 +61,15 @@
      (if (depth-eq? depth (verify-expr body depth `((loop) . ,env)))
          depth
          (error 'verify-expr "Invalid loop body in ~a" expr)))
+    (`(rethrow ,exn-depth)
+     (if (depth-<= exn-depth depth)
+         #f ;; An unconditional break, so the stack becomes polymorphic
+         (error 'verify-expr "Invalid rethrow depth in ~a" expr)))
     (`(try ,body (catch ,catch))
-     (if (and (eq? (verify-expr body depth env) depth)
-              (eq? (verify-expr catch (add1 depth) env) (add1 depth)))
+     (if (and (depth-eq? (verify-expr body depth env) depth)
+              (depth-eq? (verify-expr catch (add1 depth) env) (add1 depth)))
          depth
-         (error 'verify-expr "Invalid try block" expr)))))
+         (error 'verify-expr "Invalid try block in ~a" expr)))))
 (define (find-break-depth depth env)
   (if (zero? depth)
       (match (car env)
@@ -96,3 +100,4 @@
 (verify-expr '(block (0 . 0) (break 0)) 0 '())
 (verify-expr '(if (body a) (body b)) 0 '())
 (verify-expr '(block (0 . 0) (loop (break 1))) 0 '())
+(verify-expr '(try (body a) (catch (rethrow 0))) 0 '())
