@@ -25,16 +25,6 @@
 ;;
 ;; Note that loops currently do not allow changes to the exception stack
 
-(define (depth-eq? d1 d2)
-  (cond
-    ((and d1 d2) (eq? d1 d2))
-    ((or (not d1) (not d2)) #t)))
-(define (depth-<= d1 d2)
-  (cond
-    ((and d1 d2) (<= d1 d2))
-    ((not d2) #t)
-    (else #f)))  
-
 ;; Verifies the expression follows our type system for exceptions
 ;;
 ;; depth is #f if we're polymorphic
@@ -61,6 +51,12 @@
            #f ;; we have an unconditional break, so we're polymorphic now.
            (error 'verify-expr "Target break depth does not match current exception depth"
                   expr))))
+    (`(if ,conseq ,altern)
+     (let ((conseq-depth (verify-expr conseq depth env)))
+       ;; Make sure both branches end at the same exception depth
+       (if (eq? conseq-depth (verify-expr altern depth env))
+           conseq-depth
+           (error 'verify-expr "If branches have different exit depths in ~a" expr))))
     (`(try ,body (catch ,catch))
      (if (and (eq? (verify-expr body depth env) depth)
               (eq? (verify-expr catch (add1 depth) env) (add1 depth)))
@@ -70,6 +66,16 @@
   (if (zero? depth)
       (cdar env)
       (find-exit-depth (sub1 depth) (cdr env))))
+(define (depth-eq? d1 d2)
+  (cond
+    ((and d1 d2) (eq? d1 d2))
+    ((or (not d1) (not d2)) #t)))
+(define (depth-<= d1 d2)
+  (cond
+    ((and d1 d2) (<= d1 d2))
+    ((not d2) #t)
+    (else #f)))  
+
 
 ;; This is a manual translation of simple-throwing-cfg
 (define simple-throwing-expr
@@ -82,3 +88,4 @@
 (verify-expr simple-throwing-expr 0 '())
 
 (verify-expr '(block (0 . 0) (break 0)) 0 '())
+(verify-expr '(if (body a) (body b)) 0 '())
