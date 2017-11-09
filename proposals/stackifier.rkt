@@ -33,7 +33,7 @@
     (`(block (,enter-depth . ,exit-depth)
              ,expr* ...)
      (if (depth-<= enter-depth depth)        
-         (let ((env `((,enter-depth . ,exit-depth) . ,env)))
+         (let ((env `((block ,enter-depth ,exit-depth) . ,env)))
            (let ((depth^
                   (foldl (λ (expr depth)
                            (verify-expr expr depth env))
@@ -46,7 +46,7 @@
          (error 'verify-expr "Exception depth at block entry is incorrect" expr)))
     (`(body ,label) depth)
     (`(break ,br-depth)
-     (let ((target-depth (find-exit-depth br-depth env)))
+     (let ((target-depth (find-break-depth br-depth env)))
        (if (eq? target-depth depth)
            #f ;; we have an unconditional break, so we're polymorphic now.
            (error 'verify-expr "Target break depth does not match current exception depth"
@@ -57,15 +57,21 @@
        (if (eq? conseq-depth (verify-expr altern depth env))
            conseq-depth
            (error 'verify-expr "If branches have different exit depths in ~a" expr))))
+    (`(loop ,body)
+     (if (depth-eq? depth (verify-expr body depth `((loop) . ,env)))
+         depth
+         (error 'verify-expr "Invalid loop body in ~a" expr)))
     (`(try ,body (catch ,catch))
      (if (and (eq? (verify-expr body depth env) depth)
               (eq? (verify-expr catch (add1 depth) env) (add1 depth)))
          depth
          (error 'verify-expr "Invalid try block" expr)))))
-(define (find-exit-depth depth env)
+(define (find-break-depth depth env)
   (if (zero? depth)
-      (cdar env)
-      (find-exit-depth (sub1 depth) (cdr env))))
+      (match (car env)
+        (`(block ,enter ,exit) exit)
+        (`(loop) 0))
+      (find-break-depth (sub1 depth) (cdr env))))
 (define (depth-eq? d1 d2)
   (cond
     ((and d1 d2) (eq? d1 d2))
@@ -89,3 +95,4 @@
 
 (verify-expr '(block (0 . 0) (break 0)) 0 '())
 (verify-expr '(if (body a) (body b)) 0 '())
+(verify-expr '(block (0 . 0) (loop (break 1))) 0 '())
