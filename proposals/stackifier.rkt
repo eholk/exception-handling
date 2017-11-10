@@ -2,12 +2,12 @@
 
 ;; CFGs are defined as a list of lists. Each inner list includes a name of the
 ;; block, and a terminator descriptor. Terminators can be (goto label),
-;; (invoke normal_label catch_label) or (branch label_1 label_2).
+;; (invoke normal_label catch_label), (branch label_1 label_2), (return), or (rethrow).
 
 (define simple-throwing-cfg
   '((a (invoke b c))
     (c (goto b))
-    (b)))
+    (b (return))))
 
 ;; The goal is now to generate something that resembles WASM bytecode in its
 ;; s-expr format. The result will follow the grammar:
@@ -24,6 +24,60 @@
 ;; (body label) means the body of the CFG node with the given label
 ;;
 ;; Note that loops currently do not allow changes to the exception stack
+
+(define (block-targets node)
+  (match node
+    (`(,_ (invoke ,a ,b)) (set a b))
+    (`(,_ (goto ,a)) (set a))
+    (`(,_ (branch ,a ,b)) (set a b))
+    (`(,_ (return)) (set))
+    (`(,_ (rethrow)) (set))))
+
+(define (find-immediate-predecessors graph)
+  (define (predecessors-of label)
+    (foldl (λ (node predecessors)
+             (if (set-member? (block-targets node) label)
+                 (set-add predecessors (car node))
+                 predecessors))
+           (set)
+           graph))
+  (map (λ (node) (cons (car node) (predecessors-of (car node)))) graph))
+
+(define (inline-single-entry-blocks/predecessors cfg predecessors)
+  (define (single-entry? name)
+    (= 1 (set-count (cdr (assq name predecessors)))))
+  (define (inline-body name terminator)
+    (match terminator
+      (`(goto ,a)
+       (if (single-entry? a)
+           `(block
+             (body ,a)
+             ,(inline-body a (cadr (assq a cfg))))
+           `(goto ,a)))
+      (`(invoke ,normal ,except)
+       `(invoke ,(if (single-entry? normal)
+                     (inline-body normal (cadr (assq normal cfg)))
+                     normal)
+                ,(if (single-entry? except)
+                     (inline-body except (cadr (assq except cfg)))
+                     except)))
+      (`(return) `(return))))
+  (foldr (λ (node cfg)
+           (if (single-entry? (car node))
+               ;; If there is only one predecessor, this block will be inlined into that block
+               cfg
+               (cons (list (car node) (inline-body (car node) (cadr node))) cfg)))
+         (list)
+         cfg))
+
+(define (inline-single-entry-blocks cfg)
+  (inline-single-entry-blocks/predecessors cfg (find-immediate-predecessors cfg)))
+
+(inline-single-entry-blocks
+ '((a (branch if else))
+   (if (goto end))
+   (else (goto end))
+   (end (return))))
 
 ;; Verifies the expression follows our type system for exceptions
 ;;
