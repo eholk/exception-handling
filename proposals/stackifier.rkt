@@ -78,7 +78,33 @@
 (define (inline-single-entry-blocks cfg)
   (inline-single-entry-blocks/predecessors cfg (find-immediate-predecessors cfg)))
 
-(inline-single-entry-blocks
+;; Create an intermediate representation that's more suitable for rewriting.
+(define (cfg->expr-graph cfg)
+  (define (node->expr node)
+    (let ((label (car node))
+          (terminator (cadr node)))
+      (match terminator
+        (`(invoke ,a ,b)
+         `((try
+            (body ,label)
+            (catch
+                (goto ,b)))
+           (goto ,a)))
+        (`(goto ,a)
+         `((body ,label)
+           (goto ,a)))
+        (`(branch ,a ,b)
+         `((body ,label)
+           (if (goto ,a) (goto ,b))))
+        (`(return)
+         `((body ,label) (return)))
+        (`(rethrow) `((body ,label) (rethrow))))))
+  (foldr (λ (node cfg)
+           (cons (cons (car node) (node->expr node)) cfg))
+         '()
+         cfg))
+
+(cfg->expr-graph
  '((a (branch if else))
    (if (goto end))
    (else (goto end))
@@ -181,3 +207,45 @@
                                  (break 0)))
                             (break 1))
                      (drop-exception)) 0 '())
+
+
+
+;; after exprifying
+'((a (body a) (if (goto if) (goto else)))
+  (if (body if) (goto end))
+  (else (body else) (goto end))
+  (end (body end) (return)))
+
+;; merge-single-entry-blocks
+'((a (body a) (if (block (body if) (goto end))
+		  (block (body else) (goto end))))
+  (end (body end) (return)))
+
+;; merge-single-entry-blocks again
+'((a (block
+      (body a)
+      (if (block (body if) (break 0))
+	  (block (body else) (break 0))))
+     (body end)
+     (return)))
+;; The trick is how we merge things.. Basically, if we have multiple gotos to a
+;; block, we wrap with a block and replace gotos with breaks.
+
+;; cleanup-fallthrough
+'((a (block
+      (body a)
+      (if (block (body if))
+	  (block (body else))))
+     (body end)
+     (return)))
+;; This pass finds (break 0) in tail position in a block and removes them.  It
+;; can be an optional cleanup pass at the end.
+
+
+;; the goal:
+'(block
+  (body a)
+  (if
+   (body if)
+   (body else))
+  (body end))
