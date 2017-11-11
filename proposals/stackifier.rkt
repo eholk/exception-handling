@@ -46,27 +46,32 @@
 (define (inline-single-entry-blocks/predecessors cfg predecessors)
   (define (single-entry? name)
     (= 1 (set-count (cdr (assq name predecessors)))))
-  (define (inline-body name terminator)
-    (match terminator
-      (`(goto ,a)
-       (if (single-entry? a)
-           `(block
-             (body ,a)
-             ,(inline-body a (cadr (assq a cfg))))
-           `(goto ,a)))
-      (`(invoke ,normal ,except)
-       `(invoke ,(if (single-entry? normal)
-                     (inline-body normal (cadr (assq normal cfg)))
-                     normal)
-                ,(if (single-entry? except)
-                     (inline-body except (cadr (assq except cfg)))
-                     except)))
-      (`(return) `(return))))
+  (define (inline-single-block label)
+    (let ((node (assq label cfg)))
+      (if (single-entry? label)
+          (inline-body node)
+          node)))
+  (define (inline-body node)
+    (let ((name (car node))
+          (terminator (cadr node)))
+      (match terminator
+        (`(goto ,a)
+         (if (single-entry? a)
+             `(block
+               (body ,a)
+               ,(inline-body a (cadr (assq a cfg))))
+             `(goto ,a)))
+        (`(invoke ,normal ,except)
+         `(invoke ,(inline-single-block normal) ,(inline-single-block except)))
+        (`(branch ,conseq ,altern)
+         `(if (block (body ,conseq) ,(inline-single-block conseq))
+              (block (body ,altern) ,(inline-single-block altern))))
+        (`(return) `(return)))))
   (foldr (λ (node cfg)
            (if (single-entry? (car node))
                ;; If there is only one predecessor, this block will be inlined into that block
                cfg
-               (cons (list (car node) (inline-body (car node) (cadr node))) cfg)))
+               (cons (list (car node) (inline-body node)) cfg)))
          (list)
          cfg))
 
@@ -78,6 +83,13 @@
    (if (goto end))
    (else (goto end))
    (end (return))))
+
+'(block
+  (body a)
+  (if
+   (body if)
+   (body else))
+  (body end))
 
 ;; Verifies the expression follows our type system for exceptions
 ;;
@@ -162,10 +174,10 @@
 (verify-expr '(block (0 . 0) (loop (break 1))) 0 '())
 (verify-expr '(try (body a) (catch (rethrow 0))) 0 '())
 (verify-expr '(block (0 . 0)
-                (block (0 . 1)
-                  (try
-                   (body a)
-                   (catch
-                     (break 0)))
-                  (break 1))
-                (drop-exception)) 0 '())
+                     (block (0 . 1)
+                            (try
+                             (body a)
+                             (catch
+                                 (break 0)))
+                            (break 1))
+                     (drop-exception)) 0 '())
